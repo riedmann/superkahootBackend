@@ -1,0 +1,16 @@
+{
+  "name": "superkahoot",
+  "version": "1.0.0",
+  "main": "node_websocket_server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "uuid": "^13.0.0",
+    "ws": "^8.18.3"
+  }
+}
