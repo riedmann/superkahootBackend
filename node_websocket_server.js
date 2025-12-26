@@ -18,6 +18,8 @@ async function storeGameToFirebase(game) {
   });
 }
 
+console.log("running");
+
 wss.on("connection", (ws) => {
   ws.on("message", async (message) => {
     let msg;
@@ -28,14 +30,64 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    console.log("incomming message:", msg);
+
     switch (msg.type) {
+      case "addAnswer": {
+        const game = games.get(msg.gameId);
+        if (game && typeof game.currentQuestionIndex === "number") {
+          const participantId = msg.participantId;
+          const answer = msg.answer;
+          const questionArr = game.quizData?.questions;
+          if (Array.isArray(questionArr)) {
+            const question = questionArr[game.currentQuestionIndex];
+            if (!question.answers) question.answers = [];
+            // Prevent duplicate answers from the same participant
+            if (
+              !question.answers.some((a) => a.participantId === participantId)
+            ) {
+              question.answers.push({
+                participantId,
+                answer,
+                answeredAt: new Date(),
+              });
+              ws.send(
+                JSON.stringify({ type: "answer_received", gameId: msg.gameId })
+              );
+            } else {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "Already answered",
+                  gameId: msg.gameId,
+                })
+              );
+            }
+          } else {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "No questions found",
+                gameId: msg.gameId,
+              })
+            );
+          }
+        } else {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Game or question not found",
+              gameId: msg.gameId,
+            })
+          );
+        }
+        break;
+      }
       case "get_time": {
         ws.send(JSON.stringify({ type: "server_time", time: Date.now() }));
         break;
       }
       case "create_game": {
-        console.log("in create game:", msg);
-
         // Generate a unique 6-digit random number as gameId
         let gameId;
         do {
@@ -57,14 +109,11 @@ wss.on("connection", (ws) => {
           },
         };
         games.set(gameId, newGame);
-        console.log("sending game id ", gameId);
 
         ws.send(JSON.stringify({ type: "game_created", game: newGame }));
         break;
       }
       case "join_game": {
-        console.log("in join", msg);
-
         const game = games.get(msg.gameId);
         if (game) {
           game.participants.push(msg.player);
@@ -93,36 +142,23 @@ wss.on("connection", (ws) => {
           ws.send(JSON.stringify({ type: "game_started", gameId: msg.gameId }));
           game.status = "active";
           game.currentQuestionIndex = 0;
-          // Send countdown to all clients in the game, then send the first question after 3 seconds
-          sendCountdownToGameClients(wss, msg.gameId, 3);
-          setTimeout(() => {
-            sendQuestionToGameClients(
-              wss,
-              msg.gameId,
-              game.currentQuestionIndex
-            );
-          }, 3000);
+          showNextQuestion(wss, msg);
         }
         break;
       }
-      case "nextQuestion": {
+      case "question_timeout": {
         const game = games.get(msg.gameId);
         if (game) {
-          game.currentQuestionIndex++;
-          console.log("-----");
-
-          console.log(game);
-          console.log("xxxxx");
-
-          sendCountdownToGameClients(wss, msg.gameId, 3);
-          setTimeout(() => {
-            sendQuestionToGameClients(
-              wss,
-              msg.gameId,
-              game.currentQuestionIndex
-            );
-          }, 3000);
+          console.log(
+            `Game ${msg.gameId}: question timeout for question index ${game.currentQuestionIndex}`
+          );
+          // Send results to all clients
+          sendResultsToGameClients(wss, msg.gameId, game.currentQuestionIndex);
         }
+        break;
+      }
+      case "next_question": {
+        showNextQuestion(wss, msg);
         break;
       }
       case "submit_answer": {
@@ -154,20 +190,20 @@ wss.on("connection", (ws) => {
   });
 });
 
-console.log("WebSocket server running on ws://localhost:8080");
+function sendQuestionToGameClients(wss, gameId, index, question, questionType) {
+  let obj = {
+    type: "question",
+    gameId,
+    index,
+    question,
+    questionType,
+  };
 
-function sendQuestionToGameClients(wss, gameId, index) {
   const game = games.get(gameId);
   if (!game || !wss.clients) return;
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(
-        JSON.stringify({
-          type: "question",
-          gameId,
-          index,
-        })
-      );
+      client.send(JSON.stringify(obj));
     }
   });
 }
@@ -187,6 +223,7 @@ function sendCountdownToGameClients(wss, gameId, seconds) {
     }
   });
 }
+
 function sendResultsToGameClients(wss, gameId, index) {
   const game = games.get(gameId);
   if (!game || !wss.clients) return;
@@ -203,4 +240,23 @@ function sendResultsToGameClients(wss, gameId, index) {
       );
     }
   });
+}
+function showNextQuestion(wss, msg) {
+  const game = games.get(msg.gameId);
+  if (game) {
+    const question = game.quizData.questions[game.currentQuestionIndex];
+    const index = game.currentQuestionIndex;
+
+    sendCountdownToGameClients(wss, msg.gameId, 3);
+    setTimeout(() => {
+      sendQuestionToGameClients(
+        wss,
+        msg.gameId,
+        index,
+        question.question,
+        question.type
+      );
+    }, 3000);
+    game.currentQuestionIndex++;
+  }
 }
