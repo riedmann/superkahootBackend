@@ -40,7 +40,7 @@ wss.on("connection", (ws) => {
           const answer = msg.answer;
           const questionArr = game.quizData?.questions;
           if (Array.isArray(questionArr)) {
-            const question = questionArr[game.currentQuestionIndex];
+            const question = questionArr[msg.questionIndex];
             if (!question.answers) question.answers = [];
             // Prevent duplicate answers from the same participant
             if (
@@ -249,13 +249,7 @@ function showNextQuestion(wss, msg) {
 
     sendCountdownToGameClients(wss, msg.gameId, 3);
     setTimeout(() => {
-      sendQuestionToGameClients(
-        wss,
-        msg.gameId,
-        index,
-        question.question,
-        question.type
-      );
+      sendQuestionToGameClients(wss, msg.gameId, index, question);
     }, 3000);
     game.currentQuestionIndex++;
   }
