@@ -49,13 +49,32 @@ wss.on("connection", (ws: WebSocket) => {
             (q) => q.questionIndex === game.currentQuestionIndex - 1
           );
 
+          const currentQuestion =
+            game.quizData.questions[game.currentQuestionIndex - 1];
+
+          let isCorrect = false;
+          let points = 0;
+
+          if (currentQuestion.type === "true-false") {
+            if (msg.answer == currentQuestion.correctAnswer) {
+              isCorrect = true;
+              points = 1000; // Example point allocation
+            }
+          } else if (currentQuestion.type === "standard") {
+            // Assuming correctAnswer is an array of correct option indices
+            if (currentQuestion.correctAnswers.includes(msg.answer)) {
+              isCorrect = true;
+              points = 1000; // Example point allocation
+            }
+          }
+
           answeredQuestion?.answers.push({
             participant: participant!,
             questionId: msg.questionIndex,
             answer: msg.answer,
             answeredAt: new Date(),
-            isCorrect: true,
-            points: 1000,
+            isCorrect: isCorrect,
+            points: points,
           });
           game.hostWs.send(
             JSON.stringify({
