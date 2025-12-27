@@ -1,23 +1,10 @@
-export interface ParticipantAnswerHistory {
-  questionId: string;
-  questionIndex: number;
-  answer: any; // boolean for true/false, number[] for multiple choice
-  isCorrect: boolean;
-  points: number;
-  answeredAt: Date;
-}
-
 export interface Participant {
   id: string;
   name: string;
-  score: number;
-  joinedAt: Date;
-  isOnline: boolean;
-  answerHistory: ParticipantAnswerHistory[];
 }
 
 export interface GameAnswer {
-  participantId: string;
+  participant: Participant;
   questionId: string;
   answer: any; // boolean for true/false, number[] for multiple choice
   answeredAt: Date;
@@ -26,10 +13,9 @@ export interface GameAnswer {
 }
 
 export interface GameQuestion {
-  id: string;
   questionIndex: number;
   startedAt: Date;
-  endsAt: Date;
+  endsAt: Date | undefined;
   answers: GameAnswer[];
 }
 
@@ -37,13 +23,13 @@ export interface Game {
   id: string;
   quizId: string;
   quizTitle: string;
-  quizData?: any; // Full quiz data for client access
+  quizData: Quiz; // Full quiz data for client access
   hostId: string;
   gamePin: string;
   status: GameStatus;
   participants: Participant[];
   currentQuestionIndex: number;
-  currentQuestion?: GameQuestion;
+  answeredQuestions: GameQuestion[];
   totalQuestions: number;
   createdAt: Date;
   startedAt?: Date;
@@ -53,6 +39,7 @@ export interface Game {
     showCorrectAnswers: boolean;
     allowLateJoins: boolean;
   };
+  hostWs: any; // WebSocket connection of the host
 }
 
 export interface GameSession {

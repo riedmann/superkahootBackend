@@ -1,16 +1,14 @@
-const WebSocket = require("ws");
-const fetch = require("node-fetch");
-const { v4: uuidv4 } = require("uuid");
-
-const wss = new WebSocket.Server({ port: 8080 });
+import fetch from "node-fetch";
+import { WebSocket, WebSocketServer } from "ws";
+import { Game } from "./game.types";
 
 // In-memory game state
-const games = new Map();
+const games: Map<string, Game> = new Map();
 
 // Firebase REST API endpoint (replace with your actual values)
 const FIREBASE_URL = "https://your-firebase-project.firebaseio.com/games.json";
 
-async function storeGameToFirebase(game) {
+async function storeGameToFirebase(game: Game) {
   await fetch(FIREBASE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -20,11 +18,13 @@ async function storeGameToFirebase(game) {
 
 console.log("running");
 
-wss.on("connection", (ws) => {
-  ws.on("message", async (message) => {
-    let msg;
+const wss = new WebSocketServer({ port: 8080 });
+
+wss.on("connection", (ws: WebSocket) => {
+  ws.on("message", async (message: string | Buffer) => {
+    let msg: any;
     try {
-      msg = JSON.parse(message);
+      msg = JSON.parse(message.toString());
     } catch (e) {
       ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
       return;
@@ -36,50 +36,36 @@ wss.on("connection", (ws) => {
       case "addAnswer": {
         const game = games.get(msg.gameId);
         if (game && typeof game.currentQuestionIndex === "number") {
-          const participantId = msg.participantId;
-          const answer = msg.answer;
-          const questionArr = game.quizData?.questions;
-          if (Array.isArray(questionArr)) {
-            const question = questionArr[msg.questionIndex];
-            if (!question.answers) question.answers = [];
-            // Prevent duplicate answers from the same participant
-            if (
-              !question.answers.some((a) => a.participantId === participantId)
-            ) {
-              question.answers.push({
-                participantId,
-                answer,
-                answeredAt: new Date(),
-              });
-              ws.send(
-                JSON.stringify({ type: "answer_received", gameId: msg.gameId })
-              );
-            } else {
-              ws.send(
-                JSON.stringify({
-                  type: "error",
-                  message: "Already answered",
-                  gameId: msg.gameId,
-                })
-              );
-            }
-          } else {
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                message: "No questions found",
-                gameId: msg.gameId,
-              })
-            );
-          }
-        } else {
+          const participantId = msg.playerId;
+
           ws.send(
+            JSON.stringify({ type: "answer_received", gameId: msg.gameId })
+          );
+
+          const participant = game.participants.find(
+            (p) => p.id === participantId
+          );
+          const answeredQuestion = game.answeredQuestions.find(
+            (q) => q.questionIndex === game.currentQuestionIndex - 1
+          );
+
+          answeredQuestion?.answers.push({
+            participant: participant!,
+            questionId: msg.questionIndex,
+            answer: msg.answer,
+            answeredAt: new Date(),
+            isCorrect: true,
+            points: 1000,
+          });
+          game.hostWs.send(
             JSON.stringify({
-              type: "error",
-              message: "Game or question not found",
+              type: "answer_update",
               gameId: msg.gameId,
+              answeredQuestions: game.answeredQuestions,
             })
           );
+        } else {
+          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
         }
         break;
       }
@@ -89,17 +75,18 @@ wss.on("connection", (ws) => {
       }
       case "create_game": {
         // Generate a unique 6-digit random number as gameId
-        let gameId;
+        let gameId: string;
         do {
           gameId = Math.floor(100000 + Math.random() * 900000).toString();
         } while (games.has(gameId));
-        const newGame = {
+        const newGame: Game = {
           ...msg.data,
           id: gameId,
           gamePin: gameId,
           participants: [],
           currentQuestionIndex: 0,
           totalQuestions: msg.data?.quizData?.questions?.length || 0,
+          answeredQuestions: [],
           createdAt: new Date(),
           status: "waiting",
           settings: msg.data?.settings || {
@@ -107,7 +94,9 @@ wss.on("connection", (ws) => {
             showCorrectAnswers: true,
             allowLateJoins: true,
           },
+          hostWs: ws,
         };
+
         games.set(gameId, newGame);
 
         ws.send(JSON.stringify({ type: "game_created", game: newGame }));
@@ -119,7 +108,7 @@ wss.on("connection", (ws) => {
           game.participants.push(msg.player);
           // Broadcast to all clients in this game (including host)
           if (wss.clients) {
-            wss.clients.forEach((client) => {
+            wss.clients.forEach((client: WebSocket) => {
               if (client.readyState === WebSocket.OPEN) {
                 client.send(
                   JSON.stringify({
@@ -190,7 +179,13 @@ wss.on("connection", (ws) => {
   });
 });
 
-function sendQuestionToGameClients(wss, gameId, index, question, questionType) {
+function sendQuestionToGameClients(
+  wss: WebSocketServer,
+  gameId: string,
+  index: number,
+  question: any,
+  questionType?: string
+) {
   let obj = {
     type: "question",
     gameId,
@@ -201,17 +196,21 @@ function sendQuestionToGameClients(wss, gameId, index, question, questionType) {
 
   const game = games.get(gameId);
   if (!game || !wss.clients) return;
-  wss.clients.forEach((client) => {
+  wss.clients.forEach((client: WebSocket) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify(obj));
     }
   });
 }
 
-function sendCountdownToGameClients(wss, gameId, seconds) {
+function sendCountdownToGameClients(
+  wss: WebSocketServer,
+  gameId: string,
+  seconds: number
+) {
   const game = games.get(gameId);
   if (!game || !wss.clients) return;
-  wss.clients.forEach((client) => {
+  wss.clients.forEach((client: WebSocket) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(
         JSON.stringify({
@@ -224,28 +223,37 @@ function sendCountdownToGameClients(wss, gameId, seconds) {
   });
 }
 
-function sendResultsToGameClients(wss, gameId, index) {
+function sendResultsToGameClients(
+  wss: WebSocketServer,
+  gameId: string,
+  index: number
+) {
   const game = games.get(gameId);
   if (!game || !wss.clients) return;
-  // You can customize the results payload as needed
-  wss.clients.forEach((client) => {
+  wss.clients.forEach((client: WebSocket) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(
         JSON.stringify({
           type: "results",
           gameId,
           questionIndex: index,
-          // Add more result data here if needed
         })
       );
     }
   });
 }
-function showNextQuestion(wss, msg) {
+
+function showNextQuestion(wss: WebSocketServer, msg: any) {
   const game = games.get(msg.gameId);
   if (game) {
     const question = game.quizData.questions[game.currentQuestionIndex];
     const index = game.currentQuestionIndex;
+    game.answeredQuestions.push({
+      questionIndex: game.currentQuestionIndex,
+      startedAt: new Date(),
+      endsAt: undefined,
+      answers: [],
+    });
 
     sendCountdownToGameClients(wss, msg.gameId, 3);
     setTimeout(() => {
