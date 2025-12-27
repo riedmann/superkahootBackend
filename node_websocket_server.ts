@@ -1,19 +1,22 @@
-import fetch from "node-fetch";
+import { addDoc, collection } from "firebase/firestore";
 import { WebSocket, WebSocketServer } from "ws";
+import { db } from "./firebase";
 import { Game } from "./game.types";
 
 // In-memory game state
 const games: Map<string, Game> = new Map();
 
-// Firebase REST API endpoint (replace with your actual values)
-const FIREBASE_URL = "https://your-firebase-project.firebaseio.com/games.json";
-
-async function storeGameToFirebase(game: Game) {
-  await fetch(FIREBASE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(game),
-  });
+async function storeGameToFirestore(game: Game) {
+  try {
+    // Remove non-serializable fields (like hostWs) and undefined values
+    const { hostWs, ...serializableGame } = game;
+    // Remove any undefined fields recursively
+    const cleanGame = JSON.parse(JSON.stringify(serializableGame));
+    await addDoc(collection(db, "games"), cleanGame);
+    console.log("Game stored to Firestore");
+  } catch (error) {
+    console.error("Error storing game to Firestore:", error);
+  }
 }
 
 console.log("running");
@@ -182,10 +185,17 @@ wss.on("connection", (ws: WebSocket) => {
         if (game) {
           game.status = "finished";
           game.finishedAt = new Date();
-          await storeGameToFirebase(game);
+          await storeGameToFirestore(game);
+
+          const scores = calculateWinners(game);
+
           games.delete(msg.gameId);
           ws.send(
-            JSON.stringify({ type: "game_finished", gameId: msg.gameId })
+            JSON.stringify({
+              type: "game_finished",
+              gameId: msg.gameId,
+              winners: scores,
+            })
           );
         }
         break;
@@ -242,6 +252,51 @@ function sendCountdownToGameClients(
   });
 }
 
+function calculateWinners(game: Game) {
+  // Calculate points for each participant
+  const scores: { id: string; name: string; points: number }[] = [];
+  for (const participant of game.participants) {
+    let totalPoints = 0;
+    for (const answered of game.answeredQuestions) {
+      for (const answer of answered.answers) {
+        if (answer.participant.id === participant.id) {
+          totalPoints += answer.points || 0;
+        }
+      }
+    }
+    scores.push({
+      id: participant.id,
+      name: participant.name,
+      points: totalPoints,
+    });
+  }
+
+  // Sort by points descending
+  scores.sort((a, b) => b.points - a.points);
+
+  return scores;
+}
+
+async function finishGame(ws: any, msg: any) {
+  const game = games.get(msg.gameId);
+  if (game) {
+    game.status = "finished";
+    game.finishedAt = new Date();
+    await storeGameToFirestore(game);
+
+    const scores = calculateWinners(game);
+
+    games.delete(msg.gameId);
+    ws.send(
+      JSON.stringify({
+        type: "game_finished",
+        gameId: msg.gameId,
+        winners: scores,
+      })
+    );
+  }
+}
+
 function sendResultsToGameClients(
   wss: WebSocketServer,
   gameId: string,
@@ -265,6 +320,9 @@ function sendResultsToGameClients(
 function showNextQuestion(wss: WebSocketServer, msg: any) {
   const game = games.get(msg.gameId);
   if (game) {
+    if (game.currentQuestionIndex >= game.totalQuestions) {
+      finishGame(game.hostWs, msg);
+    }
     const question = game.quizData.questions[game.currentQuestionIndex];
     const index = game.currentQuestionIndex;
     game.answeredQuestions.push({
