@@ -8,5 +8,10 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["./*.ts", "websocket/node_websocket_server.jsr.jsr.js"]
+  "include": [
+    "./*.ts",
+    "websocket/node_websocket_server.jsr.jsr.js",
+    "deno/deno.ts",
+    "deno/deno_websocket_server.ts"
+  ]
 }

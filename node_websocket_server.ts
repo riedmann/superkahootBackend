@@ -19,9 +19,10 @@ async function storeGameToFirestore(game: Game) {
   }
 }
 
-console.log("running");
+const PORT = 8080;
+console.log("running on port", PORT);
 
-const wss = new WebSocketServer({ port: 8080 });
+const wss = new WebSocketServer({ port: PORT });
 
 wss.on("connection", (ws: WebSocket) => {
   ws.on("message", async (message: string | Buffer) => {
