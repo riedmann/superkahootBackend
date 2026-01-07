@@ -61,6 +61,25 @@ denon deno/deno_websocket_server.ts
 - Edit `tsconfig.json` for TypeScript options.
 - Update `firebase.ts` for Firebase integration if needed.
 
+### SSL/TLS Configuration
+The WebSocket server supports SSL/TLS for secure connections (wss://). To enable SSL:
+
+1. Obtain SSL certificates (e.g., from Let's Encrypt or generate self-signed certificates for development)
+2. Set the following environment variables:
+   - `SSL_CERT_PATH`: Path to your SSL certificate file (e.g., `cert.pem`)
+   - `SSL_KEY_PATH`: Path to your SSL private key file (e.g., `key.pem`)
+
+Example for development (self-signed certificate):
+```bash
+# Generate self-signed certificate (for development only)
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+# Run with SSL
+SSL_CERT_PATH=./cert.pem SSL_KEY_PATH=./key.pem npm start
+```
+
+For production, use proper SSL certificates from a trusted certificate authority.
+
 ## Contributing
 Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
 
