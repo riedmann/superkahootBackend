@@ -13,9 +13,23 @@ services:
       context: .
     environment:
       NODE_ENV: production
-    ports:
-      - 8080:8080
+    # Remove external port exposure - only nginx should be exposed
+    expose:
+      - 8080
 
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      # Uncomment for HTTPS:
+      # - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Uncomment for HTTPS certificates:
+      # - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - server
+    restart: unless-stopped
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to
 # start the database before your application. The `db-data` volume persists the
