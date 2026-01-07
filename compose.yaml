@@ -11,6 +11,8 @@ services:
   server:
     build:
       context: .
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
     # Remove external port exposure - only nginx should be exposed

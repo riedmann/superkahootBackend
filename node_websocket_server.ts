@@ -2,6 +2,8 @@ import { addDoc, collection } from "firebase/firestore";
 import { WebSocket, WebSocketServer } from "ws";
 import { db } from "./firebase";
 import { Game } from "./game.types";
+import express from "express";
+import { createServer } from "http";
 
 // In-memory game state
 const games: Map<string, Game> = new Map();
@@ -19,10 +21,15 @@ async function storeGameToFirestore(game: Game) {
   }
 }
 
-const PORT = 8080;
-console.log("running on port", PORT);
+const app = express();
+const server = createServer(app);
+const PORT = process.env.PORT || 8080;
 
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ server, path: "/ws" });
+
+app.get("/", (req, res) => {
+  res.send("Hello over HTTP!");
+});
 
 wss.on("connection", (ws: WebSocket) => {
   ws.on("message", async (message: string | Buffer) => {
@@ -340,3 +347,7 @@ function showNextQuestion(wss: WebSocketServer, msg: any) {
     game.currentQuestionIndex++;
   }
 }
+
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
