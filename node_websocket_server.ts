@@ -23,7 +23,7 @@ async function storeGameToFirestore(game: Game) {
 
 const app = express();
 const server = createServer(app);
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 9080;
 
 const wss = new WebSocketServer({ server, path: "/ws" });
 
