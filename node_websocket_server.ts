@@ -8,6 +8,34 @@ import { createServer } from "http";
 // In-memory game state
 const games: Map<string, Game> = new Map();
 
+// Track participant connections: gameId -> participantId -> WebSocket
+const participantConnections: Map<string, Map<string, WebSocket>> = new Map();
+
+// Message buffer: gameId -> array of buffered messages (keep last 50 messages per game)
+interface BufferedMessage {
+  timestamp: number;
+  message: any;
+}
+const messageBuffers: Map<string, BufferedMessage[]> = new Map();
+
+const MAX_BUFFER_SIZE = 50;
+const RECONNECT_TIMEOUT = 60000; // 60 seconds to reconnect
+
+function bufferMessage(gameId: string, message: any) {
+  if (!messageBuffers.has(gameId)) {
+    messageBuffers.set(gameId, []);
+  }
+  const buffer = messageBuffers.get(gameId)!;
+  buffer.push({
+    timestamp: Date.now(),
+    message,
+  });
+  // Keep only the last MAX_BUFFER_SIZE messages
+  if (buffer.length > MAX_BUFFER_SIZE) {
+    buffer.shift();
+  }
+}
+
 async function storeGameToFirestore(game: Game) {
   try {
     // Remove non-serializable fields (like hostWs) and undefined values
@@ -32,6 +60,30 @@ app.get("/", (req, res) => {
 });
 
 wss.on("connection", (ws: WebSocket) => {
+  let currentGameId: string | null = null;
+  let currentParticipantId: string | null = null;
+  let isHost = false;
+
+  ws.on("close", () => {
+    console.log("Connection closed", {
+      gameId: currentGameId,
+      participantId: currentParticipantId,
+      isHost,
+    });
+    // Don't remove the participant from the game, just mark the connection as closed
+    // They can reconnect within RECONNECT_TIMEOUT
+    if (currentGameId && currentParticipantId && !isHost) {
+      const connections = participantConnections.get(currentGameId);
+      if (connections) {
+        const storedWs = connections.get(currentParticipantId);
+        // Only remove if it's the same connection (not already reconnected)
+        if (storedWs === ws) {
+          connections.delete(currentParticipantId);
+        }
+      }
+    }
+  });
+
   ws.on("message", async (message: string | Buffer) => {
     let msg: any;
     try {
@@ -128,6 +180,8 @@ wss.on("connection", (ws: WebSocket) => {
         };
 
         games.set(gameId, newGame);
+        currentGameId = gameId;
+        isHost = true;
 
         ws.send(JSON.stringify({ type: "game_created", game: newGame }));
         break;
@@ -135,20 +189,86 @@ wss.on("connection", (ws: WebSocket) => {
       case "join_game": {
         const game = games.get(msg.gameId);
         if (game) {
-          game.participants.push(msg.player);
-          // Broadcast to all clients in this game (including host)
-          if (wss.clients) {
-            wss.clients.forEach((client: WebSocket) => {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(
-                  JSON.stringify({
-                    type: "joined",
-                    gameId: msg.gameId,
-                    player: msg.player,
-                  })
-                );
-              }
-            });
+          // Check if player already exists (rejoining)
+          const existingPlayer = game.participants.find(
+            (p) => p.id === msg.player.id
+          );
+          if (!existingPlayer) {
+            game.participants.push(msg.player);
+          }
+
+          // Track the connection
+          currentGameId = msg.gameId;
+          currentParticipantId = msg.player.id;
+          if (!participantConnections.has(msg.gameId)) {
+            participantConnections.set(msg.gameId, new Map());
+          }
+          participantConnections.get(msg.gameId)!.set(msg.player.id, ws);
+
+          const joinMessage = JSON.stringify({
+            type: "joined",
+            gameId: msg.gameId,
+            player: msg.player,
+          });
+
+          // Send to the client that just joined
+          ws.send(joinMessage);
+
+          // Send to host only (not to other participants)
+          if (
+            game.hostWs &&
+            game.hostWs.readyState === WebSocket.OPEN &&
+            game.hostWs !== ws
+          ) {
+            game.hostWs.send(joinMessage);
+          }
+        } else {
+          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
+        }
+        break;
+      }
+      case "reconnect": {
+        const game = games.get(msg.gameId);
+        if (game) {
+          const participant = game.participants.find(
+            (p) => p.id === msg.playerId
+          );
+          if (participant) {
+            // Update the connection
+            currentGameId = msg.gameId;
+            currentParticipantId = msg.playerId;
+            if (!participantConnections.has(msg.gameId)) {
+              participantConnections.set(msg.gameId, new Map());
+            }
+            participantConnections.get(msg.gameId)!.set(msg.playerId, ws);
+
+            // Send buffered messages since the last known timestamp
+            const buffer = messageBuffers.get(msg.gameId) || [];
+            const missedMessages = buffer.filter(
+              (m) => m.timestamp > (msg.lastMessageTime || 0)
+            );
+
+            ws.send(
+              JSON.stringify({
+                type: "reconnected",
+                gameId: msg.gameId,
+                playerId: msg.playerId,
+                missedMessages: missedMessages.map((m) => m.message),
+                currentQuestionIndex: game.currentQuestionIndex,
+                gameStatus: game.status,
+              })
+            );
+
+            console.log(
+              `Player ${msg.playerId} reconnected to game ${msg.gameId}, sent ${missedMessages.length} missed messages`
+            );
+          } else {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "Participant not found in game",
+              })
+            );
           }
         } else {
           ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
@@ -198,6 +318,10 @@ wss.on("connection", (ws: WebSocket) => {
           const scores = calculateWinners(game);
 
           games.delete(msg.gameId);
+          // Clean up message buffers and connections
+          messageBuffers.delete(msg.gameId);
+          participantConnections.delete(msg.gameId);
+
           ws.send(
             JSON.stringify({
               type: "game_finished",
@@ -232,12 +356,25 @@ function sendQuestionToGameClients(
   };
 
   const game = games.get(gameId);
-  if (!game || !wss.clients) return;
-  wss.clients.forEach((client: WebSocket) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(obj));
-    }
-  });
+  if (!game) return;
+
+  // Buffer the message
+  bufferMessage(gameId, obj);
+
+  // Send to host
+  if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
+    game.hostWs.send(JSON.stringify(obj));
+  }
+
+  // Send to all participants (excluding host)
+  const connections = participantConnections.get(gameId);
+  if (connections) {
+    connections.forEach((ws, participantId) => {
+      if (ws.readyState === WebSocket.OPEN && ws !== game.hostWs) {
+        ws.send(JSON.stringify(obj));
+      }
+    });
+  }
 }
 
 function sendCountdownToGameClients(
@@ -246,18 +383,31 @@ function sendCountdownToGameClients(
   seconds: number
 ) {
   const game = games.get(gameId);
-  if (!game || !wss.clients) return;
-  wss.clients.forEach((client: WebSocket) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(
-        JSON.stringify({
-          type: "countdown",
-          gameId,
-          seconds,
-        })
-      );
-    }
-  });
+  if (!game) return;
+
+  const obj = {
+    type: "countdown",
+    gameId,
+    seconds,
+  };
+
+  // Buffer the message
+  bufferMessage(gameId, obj);
+
+  // Send to host
+  if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
+    game.hostWs.send(JSON.stringify(obj));
+  }
+
+  // Send to all participants (excluding host)
+  const connections = participantConnections.get(gameId);
+  if (connections) {
+    connections.forEach((ws, participantId) => {
+      if (ws.readyState === WebSocket.OPEN && ws !== game.hostWs) {
+        ws.send(JSON.stringify(obj));
+      }
+    });
+  }
 }
 
 function calculateWinners(game: Game) {
@@ -295,6 +445,10 @@ async function finishGame(ws: any, msg: any) {
     const scores = calculateWinners(game);
 
     games.delete(msg.gameId);
+    // Clean up message buffers and connections
+    messageBuffers.delete(msg.gameId);
+    participantConnections.delete(msg.gameId);
+
     ws.send(
       JSON.stringify({
         type: "game_finished",
@@ -311,18 +465,31 @@ function sendResultsToGameClients(
   index: number
 ) {
   const game = games.get(gameId);
-  if (!game || !wss.clients) return;
-  wss.clients.forEach((client: WebSocket) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(
-        JSON.stringify({
-          type: "results",
-          gameId,
-          questionIndex: index,
-        })
-      );
-    }
-  });
+  if (!game) return;
+
+  const obj = {
+    type: "results",
+    gameId,
+    questionIndex: index,
+  };
+
+  // Buffer the message
+  bufferMessage(gameId, obj);
+
+  // Send to host
+  if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
+    game.hostWs.send(JSON.stringify(obj));
+  }
+
+  // Send to all participants (excluding host)
+  const connections = participantConnections.get(gameId);
+  if (connections) {
+    connections.forEach((ws, participantId) => {
+      if (ws.readyState === WebSocket.OPEN && ws !== game.hostWs) {
+        ws.send(JSON.stringify(obj));
+      }
+    });
+  }
 }
 
 function showNextQuestion(wss: WebSocketServer, msg: any) {
