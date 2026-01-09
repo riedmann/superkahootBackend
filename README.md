@@ -80,6 +80,51 @@ SSL_CERT_PATH=./cert.pem SSL_KEY_PATH=./key.pem npm start
 
 For production, use proper SSL certificates from a trusted certificate authority.
 
+## Docker Deployment
+
+### Building and Running with Docker Compose
+```bash
+docker compose up --build
+```
+
+Your application will be available at http://localhost:9080.
+
+### Updating the Server with New Code
+After pulling the latest code from the repository:
+
+```bash
+# Navigate to the Backend directory
+cd /path/to/superkahoot/Backend
+
+# Pull the latest code
+git pull
+
+# Rebuild and restart the containers
+docker compose up --build -d
+```
+
+The `--build` flag rebuilds the image with your new code, and `-d` runs it in detached mode (background).
+
+### Alternative Deployment Steps
+```bash
+# Stop the current containers
+docker compose down
+
+# Rebuild the image
+docker compose build
+
+# Start the containers
+docker compose up -d
+```
+
+### Clean Rebuild (removes cache)
+If you want to clean up old images and free space:
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
 ## Contributing
 Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
 
