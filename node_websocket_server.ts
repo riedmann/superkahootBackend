@@ -121,14 +121,35 @@ wss.on("connection", (ws: WebSocket) => {
           if (currentQuestion.type === "true-false") {
             if (msg.answer == currentQuestion.correctAnswer) {
               isCorrect = true;
-              points = 1000; // Example point allocation
             }
           } else if (currentQuestion.type === "standard") {
             // Assuming correctAnswer is an array of correct option indices
             if (currentQuestion.correctAnswers.includes(msg.answer)) {
               isCorrect = true;
-              points = 1000; // Example point allocation
             }
+          }
+
+          // Calculate points with time bonus
+          if (isCorrect) {
+            const basePoints = 500;
+            const maxTimeBonus = 500;
+            const penaltyPerSecond = 10;
+
+            // Calculate elapsed time in seconds
+            const questionStartTime =
+              answeredQuestion?.startedAt?.getTime() || Date.now();
+            const answerTime = Date.now();
+            const elapsedSeconds = Math.floor(
+              (answerTime - questionStartTime) / 1000
+            );
+
+            // Calculate time bonus: 400 - (10 * seconds), minimum 0
+            const timeBonus = Math.max(
+              0,
+              maxTimeBonus - elapsedSeconds * penaltyPerSecond
+            );
+
+            points = basePoints + timeBonus;
           }
 
           answeredQuestion?.answers.push({
