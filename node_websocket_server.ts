@@ -214,6 +214,22 @@ wss.on("connection", (ws: WebSocket) => {
           const existingPlayer = game.participants.find(
             (p) => p.id === msg.player.id
           );
+
+          // Check for duplicate name
+          const duplicateName = game.participants.find(
+            (p) => p.name === msg.player.name && p.id !== msg.player.id
+          );
+
+          if (duplicateName) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "A player with this name already exists in the game",
+              })
+            );
+            break;
+          }
+
           if (!existingPlayer) {
             game.participants.push(msg.player);
           }
