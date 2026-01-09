@@ -101,10 +101,6 @@ wss.on("connection", (ws: WebSocket) => {
         if (game && typeof game.currentQuestionIndex === "number") {
           const participantId = msg.playerId;
 
-          ws.send(
-            JSON.stringify({ type: "answer_received", gameId: msg.gameId })
-          );
-
           const participant = game.participants.find(
             (p) => p.id === participantId
           );
@@ -160,6 +156,27 @@ wss.on("connection", (ws: WebSocket) => {
             isCorrect: isCorrect,
             points: points,
           });
+
+          // Calculate total score for this participant
+          let totalScore = 0;
+          for (const answered of game.answeredQuestions) {
+            for (const answer of answered.answers) {
+              if (answer.participant.id === participantId) {
+                totalScore += answer.points || 0;
+              }
+            }
+          }
+
+          // Send results back to the player
+          ws.send(
+            JSON.stringify({
+              type: "results",
+              score: totalScore,
+              isCorrect: isCorrect,
+              points: points,
+            })
+          );
+
           game.hostWs.send(
             JSON.stringify({
               type: "answer_update",
@@ -337,11 +354,60 @@ wss.on("connection", (ws: WebSocket) => {
         showNextQuestion(wss, msg);
         break;
       }
-      case "submit_answer": {
+      case "disconnect_player": {
         const game = games.get(msg.gameId);
         if (game) {
-          // Handle answer logic here
-          ws.send(JSON.stringify({ type: "answer_received" }));
+          // Find the player to disconnect
+          const playerIndex = game.participants.findIndex(
+            (p) => p.id === msg.playerId
+          );
+
+          if (playerIndex !== -1) {
+            const player = game.participants[playerIndex];
+
+            // Remove player from participants
+            game.participants.splice(playerIndex, 1);
+
+            // Get player's connection and close it
+            const connections = participantConnections.get(msg.gameId);
+            if (connections) {
+              const playerWs = connections.get(msg.playerId);
+              if (playerWs && playerWs.readyState === WebSocket.OPEN) {
+                playerWs.send(
+                  JSON.stringify({
+                    type: "disconnected",
+                    gameId: msg.gameId,
+                    reason: msg.reason || "You have been removed from the game",
+                  })
+                );
+                playerWs.close();
+              }
+              connections.delete(msg.playerId);
+            }
+
+            // Notify host
+            if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
+              game.hostWs.send(
+                JSON.stringify({
+                  type: "player_disconnected",
+                  player: { id: msg.playerId },
+                })
+              );
+            }
+
+            console.log(
+              `Player ${player.name} (${msg.playerId}) disconnected from game ${msg.gameId}`
+            );
+          } else {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "Player not found in game",
+              })
+            );
+          }
+        } else {
+          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
         }
         break;
       }
