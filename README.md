@@ -190,3 +190,8 @@ Pull requests are welcome! For major changes, please open an issue first to disc
 
 ## License
 MIT
+
+## Docker
+Follow the logs in real time:
+
+docker logs -f <container_name_or_id>

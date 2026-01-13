@@ -108,6 +108,21 @@ wss.on("connection", (ws: WebSocket) => {
             (q) => q.questionIndex === game.currentQuestionIndex - 1
           );
 
+          // Check if participant has already answered this question
+          const hasAlreadyAnswered = answeredQuestion?.answers.some(
+            (answer) => answer.participant.id === participantId
+          );
+
+          if (hasAlreadyAnswered) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "You have already answered this question",
+              })
+            );
+            break;
+          }
+
           const currentQuestion =
             game.quizData.questions[game.currentQuestionIndex - 1];
 
@@ -345,6 +360,32 @@ wss.on("connection", (ws: WebSocket) => {
           console.log(
             `Game ${msg.gameId}: question timeout for question index ${game.currentQuestionIndex}`
           );
+
+          // Add empty answers for participants who didn't answer
+          const answeredQuestion = game.answeredQuestions.find(
+            (q) => q.questionIndex === game.currentQuestionIndex - 1
+          );
+
+          if (answeredQuestion) {
+            const participantsWhoAnswered = new Set(
+              answeredQuestion.answers.map((a) => a.participant.id)
+            );
+
+            // Add empty answer for each participant who didn't answer
+            game.participants.forEach((participant) => {
+              if (!participantsWhoAnswered.has(participant.id)) {
+                answeredQuestion.answers.push({
+                  participant: participant,
+                  questionId: (game.currentQuestionIndex - 1).toString(),
+                  answer: null,
+                  answeredAt: new Date(),
+                  isCorrect: false,
+                  points: 0,
+                });
+              }
+            });
+          }
+
           // Send results to all clients
           sendResultsToGameClients(wss, msg.gameId, game.currentQuestionIndex);
         }
