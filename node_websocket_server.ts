@@ -43,7 +43,6 @@ async function storeGameToFirestore(game: Game) {
     // Remove any undefined fields recursively
     const cleanGame = JSON.parse(JSON.stringify(serializableGame));
     await addDoc(collection(db, "games"), cleanGame);
-    console.log("Game stored to Firestore");
   } catch (error) {
     console.error("Error storing game to Firestore:", error);
   }
@@ -85,404 +84,447 @@ wss.on("connection", (ws: WebSocket) => {
   });
 
   ws.on("message", async (message: string | Buffer) => {
-    let msg: any;
     try {
-      msg = JSON.parse(message.toString());
-    } catch (e) {
-      ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
-      return;
-    }
+      let msg: any;
+      try {
+        msg = JSON.parse(message.toString());
+      } catch (e) {
+        ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
+        return;
+      }
 
-    console.log("incomming message:", msg);
+      console.log("incomming message:", msg);
 
-    switch (msg.type) {
-      case "addAnswer": {
-        const game = games.get(msg.gameId);
-        if (game && typeof game.currentQuestionIndex === "number") {
-          const participantId = msg.playerId;
+      switch (msg.type) {
+        case "addAnswer": {
+          const game = games.get(msg.gameId);
+          if (game && typeof game.currentQuestionIndex === "number") {
+            const participantId = msg.playerId;
 
-          const participant = game.participants.find(
-            (p) => p.id === participantId
-          );
-          const answeredQuestion = game.answeredQuestions.find(
-            (q) => q.questionIndex === game.currentQuestionIndex - 1
-          );
-
-          // Check if participant has already answered this question
-          const hasAlreadyAnswered = answeredQuestion?.answers.some(
-            (answer) => answer.participant.id === participantId
-          );
-
-          if (hasAlreadyAnswered) {
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                message: "You have already answered this question",
-              })
+            const participant = game.participants.find(
+              (p) => p.id === participantId
             );
-            break;
-          }
+            const answeredQuestion = game.answeredQuestions.find(
+              (q) => q.questionIndex === game.currentQuestionIndex - 1
+            );
 
-          const currentQuestion =
-            game.quizData.questions[game.currentQuestionIndex - 1];
+            // Check if participant has already answered this question
+            const hasAlreadyAnswered = answeredQuestion?.answers.some(
+              (answer) => answer.participant.id === participantId
+            );
 
-          let isCorrect = false;
-          let points = 0;
-
-          if (currentQuestion.type === "true-false") {
-            if (msg.answer == currentQuestion.correctAnswer) {
-              isCorrect = true;
+            if (hasAlreadyAnswered) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "You have already answered this question",
+                })
+              );
+              break;
             }
-          } else if (currentQuestion.type === "standard") {
-            // Assuming correctAnswer is an array of correct option indices
-            if (currentQuestion.correctAnswers.includes(msg.answer)) {
-              isCorrect = true;
-            }
-          }
 
-          // Calculate points with time bonus
-          if (isCorrect) {
-            const basePoints = 500;
-            const maxTimeBonus = 500;
-            const penaltyPerSecond = 10;
+            const currentQuestion =
+              game.quizData.questions[game.currentQuestionIndex - 1];
 
-            // Calculate elapsed time in seconds
-            const questionStartTime =
-              answeredQuestion?.startedAt?.getTime() || Date.now();
-            const answerTime = Date.now();
-            const elapsedSeconds = Math.floor(
-              (answerTime - questionStartTime) / 1000
-            );
+            let isCorrect = false;
+            let points = 0;
 
-            // Calculate time bonus: 400 - (10 * seconds), minimum 0
-            const timeBonus = Math.max(
-              0,
-              maxTimeBonus - elapsedSeconds * penaltyPerSecond
-            );
-
-            points = basePoints + timeBonus;
-          }
-
-          answeredQuestion?.answers.push({
-            participant: participant!,
-            questionId: msg.questionIndex,
-            answer: msg.answer,
-            answeredAt: new Date(),
-            isCorrect: isCorrect,
-            points: points,
-          });
-
-          // Calculate total score for this participant
-          let totalScore = 0;
-          for (const answered of game.answeredQuestions) {
-            for (const answer of answered.answers) {
-              if (answer.participant.id === participantId) {
-                totalScore += answer.points || 0;
+            if (currentQuestion.type === "true-false") {
+              if (msg.answer == currentQuestion.correctAnswer) {
+                isCorrect = true;
+              }
+            } else if (currentQuestion.type === "standard") {
+              // Assuming correctAnswer is an array of correct option indices
+              if (currentQuestion.correctAnswers.includes(msg.answer)) {
+                isCorrect = true;
               }
             }
-          }
 
-          // Send results back to the player
-          ws.send(
-            JSON.stringify({
-              type: "results",
-              score: totalScore,
+            // Calculate points with time bonus
+            if (isCorrect) {
+              const basePoints = 500;
+              const maxTimeBonus = 500;
+              const penaltyPerSecond = 10;
+
+              // Calculate elapsed time in seconds
+              const questionStartTime =
+                answeredQuestion?.startedAt?.getTime() || Date.now();
+              const answerTime = Date.now();
+              const elapsedSeconds = Math.floor(
+                (answerTime - questionStartTime) / 1000
+              );
+
+              // Calculate time bonus: 400 - (10 * seconds), minimum 0
+              const timeBonus = Math.max(
+                0,
+                maxTimeBonus - elapsedSeconds * penaltyPerSecond
+              );
+
+              points = basePoints + timeBonus;
+            }
+
+            answeredQuestion?.answers.push({
+              participant: participant!,
+              questionId: msg.questionIndex,
+              answer: msg.answer,
+              answeredAt: new Date(),
               isCorrect: isCorrect,
               points: points,
-            })
-          );
+            });
 
-          game.hostWs.send(
-            JSON.stringify({
-              type: "answer_update",
-              gameId: msg.gameId,
-              answeredQuestions: game.answeredQuestions,
-            })
-          );
-        } else {
-          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
-        }
-        break;
-      }
-      case "get_time": {
-        ws.send(JSON.stringify({ type: "server_time", time: Date.now() }));
-        break;
-      }
-      case "create_game": {
-        // Generate a unique 6-digit random number as gameId
-        let gameId: string;
-        do {
-          gameId = Math.floor(100000 + Math.random() * 900000).toString();
-        } while (games.has(gameId));
-        const newGame: Game = {
-          ...msg.data,
-          id: gameId,
-          gamePin: gameId,
-          participants: [],
-          currentQuestionIndex: 0,
-          totalQuestions: msg.data?.quizData?.questions?.length || 0,
-          answeredQuestions: [],
-          createdAt: new Date(),
-          status: "waiting",
-          settings: msg.data?.settings || {
-            questionTimeLimit: 30,
-            showCorrectAnswers: true,
-            allowLateJoins: true,
-          },
-          hostWs: ws,
-        };
+            // Calculate total score for this participant
+            let totalScore = 0;
+            for (const answered of game.answeredQuestions) {
+              for (const answer of answered.answers) {
+                if (
+                  answer.participant &&
+                  answer.participant.id === participantId
+                ) {
+                  totalScore += answer.points || 0;
+                }
+              }
+            }
 
-        games.set(gameId, newGame);
-        currentGameId = gameId;
-        isHost = true;
-
-        ws.send(JSON.stringify({ type: "game_created", game: newGame }));
-        break;
-      }
-      case "join_game": {
-        const game = games.get(msg.gameId);
-        if (game) {
-          // Check if player already exists (rejoining)
-          const existingPlayer = game.participants.find(
-            (p) => p.id === msg.player.id
-          );
-
-          // Check for duplicate name
-          const duplicateName = game.participants.find(
-            (p) => p.name === msg.player.name && p.id !== msg.player.id
-          );
-
-          if (duplicateName) {
+            // Send results back to the player
             ws.send(
               JSON.stringify({
-                type: "error",
-                message: "A player with this name already exists in the game",
+                type: "results",
+                score: totalScore,
+                isCorrect: isCorrect,
+                points: points,
               })
             );
-            break;
+
+            game.hostWs.send(
+              JSON.stringify({
+                type: "answer_update",
+                gameId: msg.gameId,
+                answeredQuestions: game.answeredQuestions,
+              })
+            );
+          } else {
+            ws.send(
+              JSON.stringify({ type: "error", message: "Game not found" })
+            );
           }
-
-          if (!existingPlayer) {
-            game.participants.push(msg.player);
-          }
-
-          // Track the connection
-          currentGameId = msg.gameId;
-          currentParticipantId = msg.player.id;
-          if (!participantConnections.has(msg.gameId)) {
-            participantConnections.set(msg.gameId, new Map());
-          }
-          participantConnections.get(msg.gameId)!.set(msg.player.id, ws);
-
-          const joinMessage = JSON.stringify({
-            type: "joined",
-            gameId: msg.gameId,
-            player: msg.player,
-          });
-
-          // Send to the client that just joined
-          ws.send(joinMessage);
-
-          // Send to host only (not to other participants)
-          if (
-            game.hostWs &&
-            game.hostWs.readyState === WebSocket.OPEN &&
-            game.hostWs !== ws
-          ) {
-            game.hostWs.send(joinMessage);
-          }
-        } else {
-          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
+          break;
         }
-        break;
-      }
-      case "reconnect": {
-        const game = games.get(msg.gameId);
-        if (game) {
-          const participant = game.participants.find(
-            (p) => p.id === msg.playerId
-          );
-          if (participant) {
-            // Update the connection
+        case "get_time": {
+          ws.send(JSON.stringify({ type: "server_time", time: Date.now() }));
+          break;
+        }
+        case "create_game": {
+          // Generate a unique 6-digit random number as gameId
+          let gameId: string;
+          do {
+            gameId = Math.floor(100000 + Math.random() * 900000).toString();
+          } while (games.has(gameId));
+          const newGame: Game = {
+            ...msg.data,
+            id: gameId,
+            gamePin: gameId,
+            participants: [],
+            currentQuestionIndex: 0,
+            totalQuestions: msg.data?.quizData?.questions?.length || 0,
+            answeredQuestions: [],
+            createdAt: new Date(),
+            status: "waiting",
+            settings: msg.data?.settings || {
+              questionTimeLimit: 30,
+              showCorrectAnswers: true,
+              allowLateJoins: true,
+            },
+            hostWs: ws,
+          };
+
+          games.set(gameId, newGame);
+          currentGameId = gameId;
+          isHost = true;
+
+          ws.send(JSON.stringify({ type: "game_created", game: newGame }));
+          break;
+        }
+        case "join_game": {
+          const game = games.get(msg.gameId);
+          if (game) {
+            // Check if player already exists (rejoining)
+            const existingPlayer = game.participants.find(
+              (p) => p.id === msg.player.id
+            );
+
+            // Check for duplicate name
+            const duplicateName = game.participants.find(
+              (p) => p.name === msg.player.name && p.id !== msg.player.id
+            );
+
+            if (duplicateName) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "A player with this name already exists in the game",
+                })
+              );
+              break;
+            }
+
+            if (!existingPlayer) {
+              game.participants.push(msg.player);
+            }
+
+            // Track the connection
             currentGameId = msg.gameId;
-            currentParticipantId = msg.playerId;
+            currentParticipantId = msg.player.id;
             if (!participantConnections.has(msg.gameId)) {
               participantConnections.set(msg.gameId, new Map());
             }
-            participantConnections.get(msg.gameId)!.set(msg.playerId, ws);
+            participantConnections.get(msg.gameId)!.set(msg.player.id, ws);
 
-            // Send buffered messages since the last known timestamp
-            const buffer = messageBuffers.get(msg.gameId) || [];
-            const missedMessages = buffer.filter(
-              (m) => m.timestamp > (msg.lastMessageTime || 0)
-            );
+            const joinMessage = JSON.stringify({
+              type: "joined",
+              gameId: msg.gameId,
+              player: msg.player,
+            });
 
-            ws.send(
-              JSON.stringify({
-                type: "reconnected",
-                gameId: msg.gameId,
-                playerId: msg.playerId,
-                missedMessages: missedMessages.map((m) => m.message),
-                currentQuestionIndex: game.currentQuestionIndex,
-                gameStatus: game.status,
-              })
-            );
+            // Send to the client that just joined
+            ws.send(joinMessage);
 
-            console.log(
-              `Player ${msg.playerId} reconnected to game ${msg.gameId}, sent ${missedMessages.length} missed messages`
-            );
+            // Send to host only (not to other participants)
+            if (
+              game.hostWs &&
+              game.hostWs.readyState === WebSocket.OPEN &&
+              game.hostWs !== ws
+            ) {
+              game.hostWs.send(joinMessage);
+            }
           } else {
             ws.send(
-              JSON.stringify({
-                type: "error",
-                message: "Participant not found in game",
-              })
+              JSON.stringify({ type: "error", message: "Game not found" })
             );
           }
-        } else {
-          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
+          break;
         }
-        break;
-      }
-      case "start_game": {
-        const game = games.get(msg.gameId);
-        if (game) {
-          ws.send(JSON.stringify({ type: "game_started", gameId: msg.gameId }));
-          game.status = "active";
-          game.currentQuestionIndex = 0;
-          showNextQuestion(wss, msg);
-        }
-        break;
-      }
-      case "question_timeout": {
-        const game = games.get(msg.gameId);
-        if (game) {
-          console.log(
-            `Game ${msg.gameId}: question timeout for question index ${game.currentQuestionIndex}`
-          );
+        case "reconnect": {
+          console.log("in reconnect");
 
-          // Add empty answers for participants who didn't answer
-          const answeredQuestion = game.answeredQuestions.find(
-            (q) => q.questionIndex === game.currentQuestionIndex - 1
-          );
-
-          if (answeredQuestion) {
-            const participantsWhoAnswered = new Set(
-              answeredQuestion.answers.map((a) => a.participant.id)
+          const game = games.get(msg.gameId);
+          if (game) {
+            const participant = game.participants.find(
+              (p) => p.id === msg.playerId
             );
-
-            // Add empty answer for each participant who didn't answer
-            game.participants.forEach((participant) => {
-              if (!participantsWhoAnswered.has(participant.id)) {
-                answeredQuestion.answers.push({
-                  participant: participant,
-                  questionId: (game.currentQuestionIndex - 1).toString(),
-                  answer: null,
-                  answeredAt: new Date(),
-                  isCorrect: false,
-                  points: 0,
-                });
+            if (participant) {
+              // Update the connection
+              currentGameId = msg.gameId;
+              currentParticipantId = msg.playerId;
+              if (!participantConnections.has(msg.gameId)) {
+                participantConnections.set(msg.gameId, new Map());
               }
-            });
-          }
+              participantConnections.get(msg.gameId)!.set(msg.playerId, ws);
 
-          // Send results to all clients
-          sendResultsToGameClients(wss, msg.gameId, game.currentQuestionIndex);
-        }
-        break;
-      }
-      case "next_question": {
-        showNextQuestion(wss, msg);
-        break;
-      }
-      case "disconnect_player": {
-        const game = games.get(msg.gameId);
-        if (game) {
-          // Find the player to disconnect
-          const playerIndex = game.participants.findIndex(
-            (p) => p.id === msg.playerId
-          );
+              // Send buffered messages since the last known timestamp
+              const buffer = messageBuffers.get(msg.gameId) || [];
+              const missedMessages = buffer.filter(
+                (m) => m.timestamp > (msg.lastMessageTime || 0)
+              );
 
-          if (playerIndex !== -1) {
-            const player = game.participants[playerIndex];
-
-            // Remove player from participants
-            game.participants.splice(playerIndex, 1);
-
-            // Get player's connection and close it
-            const connections = participantConnections.get(msg.gameId);
-            if (connections) {
-              const playerWs = connections.get(msg.playerId);
-              if (playerWs && playerWs.readyState === WebSocket.OPEN) {
-                playerWs.send(
-                  JSON.stringify({
-                    type: "disconnected",
-                    gameId: msg.gameId,
-                    reason: msg.reason || "You have been removed from the game",
-                  })
-                );
-                playerWs.close();
-              }
-              connections.delete(msg.playerId);
-            }
-
-            // Notify host
-            if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
-              game.hostWs.send(
+              ws.send(
                 JSON.stringify({
-                  type: "player_disconnected",
-                  player: { id: msg.playerId },
+                  type: "reconnected",
+                  gameId: msg.gameId,
+                  playerId: msg.playerId,
+                  missedMessages: missedMessages.map((m) => m.message),
+                  currentQuestionIndex: game.currentQuestionIndex,
+                  gameStatus: game.status,
+                })
+              );
+            } else {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "Participant not found in game",
                 })
               );
             }
-
-            console.log(
-              `Player ${player.name} (${msg.playerId}) disconnected from game ${msg.gameId}`
-            );
           } else {
             ws.send(
-              JSON.stringify({
-                type: "error",
-                message: "Player not found in game",
-              })
+              JSON.stringify({ type: "error", message: "Game not found" })
             );
           }
-        } else {
-          ws.send(JSON.stringify({ type: "error", message: "Game not found" }));
+          break;
         }
-        break;
-      }
-      case "finish_game": {
-        const game = games.get(msg.gameId);
-        if (game) {
-          game.status = "finished";
-          game.finishedAt = new Date();
-          await storeGameToFirestore(game);
+        case "start_game": {
+          const game = games.get(msg.gameId);
+          if (game) {
+            ws.send(
+              JSON.stringify({ type: "game_started", gameId: msg.gameId })
+            );
+            game.status = "active";
+            game.currentQuestionIndex = 0;
+            showNextQuestion(wss, msg);
+          }
+          break;
+        }
+        case "question_timeout": {
+          const game = games.get(msg.gameId);
+          if (game) {
+            // Add empty answers for participants who didn't answer
+            const answeredQuestion = game.answeredQuestions.find(
+              (q) => q.questionIndex === game.currentQuestionIndex - 1
+            );
 
-          const scores = calculateWinners(game);
+            if (answeredQuestion) {
+              const participantsWhoAnswered = new Set(
+                answeredQuestion.answers.map((a) => a.participant.id)
+              );
 
-          games.delete(msg.gameId);
-          // Clean up message buffers and connections
-          messageBuffers.delete(msg.gameId);
-          participantConnections.delete(msg.gameId);
+              // Add empty answer for each participant who didn't answer
+              game.participants.forEach((participant) => {
+                if (!participantsWhoAnswered.has(participant.id)) {
+                  answeredQuestion.answers.push({
+                    participant: participant,
+                    questionId: (game.currentQuestionIndex - 1).toString(),
+                    answer: null,
+                    answeredAt: new Date(),
+                    isCorrect: false,
+                    points: 0,
+                  });
+                }
+              });
+            }
 
-          ws.send(
-            JSON.stringify({
+            // Send results to all clients
+            sendResultsToGameClients(
+              wss,
+              msg.gameId,
+              game.currentQuestionIndex
+            );
+          }
+          break;
+        }
+        case "next_question": {
+          showNextQuestion(wss, msg);
+          break;
+        }
+        case "disconnect_player": {
+          const game = games.get(msg.gameId);
+          if (game) {
+            // Find the player to disconnect
+            const playerIndex = game.participants.findIndex(
+              (p) => p.id === msg.playerId
+            );
+
+            if (playerIndex !== -1) {
+              const player = game.participants[playerIndex];
+
+              // Remove player from participants
+              game.participants.splice(playerIndex, 1);
+
+              // Get player's connection and close it
+              const connections = participantConnections.get(msg.gameId);
+              if (connections) {
+                const playerWs = connections.get(msg.playerId);
+                if (playerWs && playerWs.readyState === WebSocket.OPEN) {
+                  playerWs.send(
+                    JSON.stringify({
+                      type: "disconnected",
+                      gameId: msg.gameId,
+                      reason:
+                        msg.reason || "You have been removed from the game",
+                    })
+                  );
+                  playerWs.close();
+                }
+                connections.delete(msg.playerId);
+              }
+
+              // Notify host
+              if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
+                game.hostWs.send(
+                  JSON.stringify({
+                    type: "player_disconnected",
+                    player: { id: msg.playerId },
+                  })
+                );
+              }
+            } else {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "Player not found in game",
+                })
+              );
+            }
+          } else {
+            ws.send(
+              JSON.stringify({ type: "error", message: "Game not found" })
+            );
+          }
+          break;
+        }
+        case "finish_game": {
+          const game = games.get(msg.gameId);
+          if (game) {
+            game.status = "finished";
+            game.finishedAt = new Date();
+            await storeGameToFirestore(game);
+
+            const scores = calculateWinners(game);
+
+            const finishMessage = {
               type: "game_finished",
               gameId: msg.gameId,
               winners: scores,
-            })
-          );
+            };
+
+            sendToAllClients(msg.gameId, finishMessage);
+
+            // Clean up after sending messages
+            games.delete(msg.gameId);
+            messageBuffers.delete(msg.gameId);
+            participantConnections.delete(msg.gameId);
+          }
+          break;
         }
-        break;
+        default:
+          ws.send(
+            JSON.stringify({ type: "error", message: "Unknown message type" })
+          );
       }
-      default:
-        ws.send(
-          JSON.stringify({ type: "error", message: "Unknown message type" })
-        );
+    } catch (error) {
+      console.error("Error processing message:", error);
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          message: "An internal server error occurred.",
+        })
+      );
     }
   });
 });
+
+function sendToAllClients(gameId: string, message: any) {
+  const game = games.get(gameId);
+  if (!game) return;
+
+  const messageString = JSON.stringify(message);
+
+  // Buffer the message
+  bufferMessage(gameId, message);
+
+  // Send to host
+  if (game.hostWs && game.hostWs.readyState === WebSocket.OPEN) {
+    game.hostWs.send(messageString);
+  }
+
+  // Send to all participants
+  const connections = participantConnections.get(gameId);
+  if (connections) {
+    connections.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(messageString);
+      }
+    });
+  }
+}
 
 function sendQuestionToGameClients(
   wss: WebSocketServer,
