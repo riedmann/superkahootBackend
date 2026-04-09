@@ -102,15 +102,15 @@ wss.on("connection", (ws: WebSocket) => {
             const participantId = msg.playerId;
 
             const participant = game.participants.find(
-              (p) => p.id === participantId
+              (p) => p.id === participantId,
             );
             const answeredQuestion = game.answeredQuestions.find(
-              (q) => q.questionIndex === game.currentQuestionIndex - 1
+              (q) => q.questionIndex === game.currentQuestionIndex - 1,
             );
 
             // Check if participant has already answered this question
             const hasAlreadyAnswered = answeredQuestion?.answers.some(
-              (answer) => answer.participant.id === participantId
+              (answer) => answer.participant.id === participantId,
             );
 
             if (hasAlreadyAnswered) {
@@ -118,7 +118,7 @@ wss.on("connection", (ws: WebSocket) => {
                 JSON.stringify({
                   type: "error",
                   message: "You have already answered this question",
-                })
+                }),
               );
               break;
             }
@@ -154,13 +154,13 @@ wss.on("connection", (ws: WebSocket) => {
                 answeredQuestion?.startedAt?.getTime() || Date.now();
               const answerTime = Date.now();
               const elapsedSeconds = Math.floor(
-                (answerTime - questionStartTime) / 1000
+                (answerTime - questionStartTime) / 1000,
               );
 
               // Calculate time bonus: 400 - (10 * seconds), minimum 0
               const timeBonus = Math.max(
                 0,
-                maxTimeBonus - elapsedSeconds * penaltyPerSecond
+                maxTimeBonus - elapsedSeconds * penaltyPerSecond,
               );
 
               points = basePoints + timeBonus;
@@ -195,7 +195,7 @@ wss.on("connection", (ws: WebSocket) => {
                 score: totalScore,
                 isCorrect: isCorrect,
                 points: points,
-              })
+              }),
             );
 
             game.hostWs.send(
@@ -203,11 +203,11 @@ wss.on("connection", (ws: WebSocket) => {
                 type: "answer_update",
                 gameId: msg.gameId,
                 answeredQuestions: game.answeredQuestions,
-              })
+              }),
             );
           } else {
             ws.send(
-              JSON.stringify({ type: "error", message: "Game not found" })
+              JSON.stringify({ type: "error", message: "Game not found" }),
             );
           }
           break;
@@ -252,12 +252,12 @@ wss.on("connection", (ws: WebSocket) => {
           if (game) {
             // Check if player already exists (rejoining)
             const existingPlayer = game.participants.find(
-              (p) => p.id === msg.player.id
+              (p) => p.id === msg.player.id,
             );
 
             // Check for duplicate name
             const duplicateName = game.participants.find(
-              (p) => p.name === msg.player.name && p.id !== msg.player.id
+              (p) => p.name === msg.player.name && p.id !== msg.player.id,
             );
 
             if (duplicateName) {
@@ -265,7 +265,7 @@ wss.on("connection", (ws: WebSocket) => {
                 JSON.stringify({
                   type: "error",
                   message: "A player with this name already exists in the game",
-                })
+                }),
               );
               break;
             }
@@ -301,7 +301,7 @@ wss.on("connection", (ws: WebSocket) => {
             }
           } else {
             ws.send(
-              JSON.stringify({ type: "error", message: "Game not found" })
+              JSON.stringify({ type: "error", message: "Game not found" }),
             );
           }
           break;
@@ -312,7 +312,7 @@ wss.on("connection", (ws: WebSocket) => {
           const game = games.get(msg.gameId);
           if (game) {
             const participant = game.participants.find(
-              (p) => p.id === msg.playerId
+              (p) => p.id === msg.playerId,
             );
             if (participant) {
               // Update the connection
@@ -326,7 +326,7 @@ wss.on("connection", (ws: WebSocket) => {
               // Send buffered messages since the last known timestamp
               const buffer = messageBuffers.get(msg.gameId) || [];
               const missedMessages = buffer.filter(
-                (m) => m.timestamp > (msg.lastMessageTime || 0)
+                (m) => m.timestamp > (msg.lastMessageTime || 0),
               );
 
               ws.send(
@@ -337,19 +337,19 @@ wss.on("connection", (ws: WebSocket) => {
                   missedMessages: missedMessages.map((m) => m.message),
                   currentQuestionIndex: game.currentQuestionIndex,
                   gameStatus: game.status,
-                })
+                }),
               );
             } else {
               ws.send(
                 JSON.stringify({
                   type: "error",
                   message: "Participant not found in game",
-                })
+                }),
               );
             }
           } else {
             ws.send(
-              JSON.stringify({ type: "error", message: "Game not found" })
+              JSON.stringify({ type: "error", message: "Game not found" }),
             );
           }
           break;
@@ -358,7 +358,7 @@ wss.on("connection", (ws: WebSocket) => {
           const game = games.get(msg.gameId);
           if (game) {
             ws.send(
-              JSON.stringify({ type: "game_started", gameId: msg.gameId })
+              JSON.stringify({ type: "game_started", gameId: msg.gameId }),
             );
             game.status = "active";
             game.currentQuestionIndex = 0;
@@ -371,12 +371,12 @@ wss.on("connection", (ws: WebSocket) => {
           if (game) {
             // Add empty answers for participants who didn't answer
             const answeredQuestion = game.answeredQuestions.find(
-              (q) => q.questionIndex === game.currentQuestionIndex - 1
+              (q) => q.questionIndex === game.currentQuestionIndex - 1,
             );
 
             if (answeredQuestion) {
               const participantsWhoAnswered = new Set(
-                answeredQuestion.answers.map((a) => a.participant.id)
+                answeredQuestion.answers.map((a) => a.participant.id),
               );
 
               // Add empty answer for each participant who didn't answer
@@ -398,7 +398,7 @@ wss.on("connection", (ws: WebSocket) => {
             sendResultsToGameClients(
               wss,
               msg.gameId,
-              game.currentQuestionIndex
+              game.currentQuestionIndex,
             );
           }
           break;
@@ -412,7 +412,7 @@ wss.on("connection", (ws: WebSocket) => {
           if (game) {
             // Find the player to disconnect
             const playerIndex = game.participants.findIndex(
-              (p) => p.id === msg.playerId
+              (p) => p.id === msg.playerId,
             );
 
             if (playerIndex !== -1) {
@@ -432,7 +432,7 @@ wss.on("connection", (ws: WebSocket) => {
                       gameId: msg.gameId,
                       reason:
                         msg.reason || "You have been removed from the game",
-                    })
+                    }),
                   );
                   playerWs.close();
                 }
@@ -445,7 +445,7 @@ wss.on("connection", (ws: WebSocket) => {
                   JSON.stringify({
                     type: "player_disconnected",
                     player: { id: msg.playerId },
-                  })
+                  }),
                 );
               }
             } else {
@@ -453,12 +453,12 @@ wss.on("connection", (ws: WebSocket) => {
                 JSON.stringify({
                   type: "error",
                   message: "Player not found in game",
-                })
+                }),
               );
             }
           } else {
             ws.send(
-              JSON.stringify({ type: "error", message: "Game not found" })
+              JSON.stringify({ type: "error", message: "Game not found" }),
             );
           }
           break;
@@ -489,7 +489,7 @@ wss.on("connection", (ws: WebSocket) => {
         }
         default:
           ws.send(
-            JSON.stringify({ type: "error", message: "Unknown message type" })
+            JSON.stringify({ type: "error", message: "Unknown message type" }),
           );
       }
     } catch (error) {
@@ -498,7 +498,7 @@ wss.on("connection", (ws: WebSocket) => {
         JSON.stringify({
           type: "error",
           message: "An internal server error occurred.",
-        })
+        }),
       );
     }
   });
@@ -534,7 +534,7 @@ function sendQuestionToGameClients(
   gameId: string,
   index: number,
   question: any,
-  questionType?: string
+  questionType?: string,
 ) {
   let obj = {
     type: "question",
@@ -569,7 +569,7 @@ function sendQuestionToGameClients(
 function sendCountdownToGameClients(
   wss: WebSocketServer,
   gameId: string,
-  seconds: number
+  seconds: number,
 ) {
   const game = games.get(gameId);
   if (!game) return;
@@ -643,7 +643,7 @@ async function finishGame(ws: any, msg: any) {
         type: "game_finished",
         gameId: msg.gameId,
         winners: scores,
-      })
+      }),
     );
   }
 }
@@ -651,7 +651,7 @@ async function finishGame(ws: any, msg: any) {
 function sendResultsToGameClients(
   wss: WebSocketServer,
   gameId: string,
-  index: number
+  index: number,
 ) {
   const game = games.get(gameId);
   if (!game) return;
