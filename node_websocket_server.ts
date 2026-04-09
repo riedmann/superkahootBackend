@@ -135,7 +135,10 @@ wss.on("connection", (ws: WebSocket) => {
               }
             } else if (currentQuestion.type === "standard") {
               // Assuming correctAnswer is an array of correct option indices
-              if (currentQuestion.correctAnswers.includes(msg.answer)) {
+              if (
+                Array.isArray(currentQuestion.correctAnswers) &&
+                currentQuestion.correctAnswers.includes(msg.answer)
+              ) {
                 isCorrect = true;
               }
             }
